@@ -1,2 +1,10 @@
 # Inhibition-Phenotypes
-code and data for nutrient amendments inhibition phenotype project &amp; manuscript (Chapt 2)
+
+This repository contains data, code, and figures for the manuscript 'Long-term nutrient history and short-term resource availability shape antibiotic-mediated inhibition among coevolved soil Streptomyces' by Molly A. Kuhs and Linda L. Kinkel.  
+
+Manuscript in review - stay tuned ✌️
+
+
+## Abstract 
+Soil bacteria compete for limiting resources, often through the production of antibiotics that inhibit, suppress, or kill microbial opponents. Although antibiotics are well established as weapons in resource competition, the ecological and evolutionary factors shaping their production within coevolved soil populations remain poorly understood. Nutrient availability is a likely driver operating across multiple timescales. Over evolutionary time, nutrient history can select for differences in resource use and antagonistic capacities, whereas over ecological time, immediate resource conditions may influence which competitors are targeted for inhibition. However, few studies have examined how these timescales together shape inhibitory interactions among coexisting populations. To address this gap, we tested how long-term nutrient history and short-term resource availability jointly influence inhibitory interactions in coevolved Streptomyces communities from field plots with contrasting long-term nutrient histories. Isolates from low-nutrient soils tended to produce stronger and more consistent inhibition phenotypes, whereas isolates from high-nutrient soils exhibited greater variability, suggesting that nutrient limitation may constrain evolutionary outcomes. Inhibition also shifted with immediate resource availability. When resources were scarce, isolates from nutrient-limited soils directed inhibition toward their closest resource competitors, whereas isolates from nutrient-rich soils did not. Together, these results suggest that evolutionary history and current ecological context jointly shape microbial inhibition, and that studies lacking both evolutionary and ecological context may capture an isolate’s inhibitory potential rather than its realized function in soil. Incorporating both perspectives is therefore critical to understanding the functional role of antibiotics within natural microbial communities.
+
