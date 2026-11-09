@@ -1,0 +1,753 @@
+---
+title: "Nutrient Amendment - Inhibition Assay "
+author: "Molly Kuhs"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: True
+    toc_depth: 4
+    number_sections: False
+    highlight: pygments
+    theme: cosmo
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+   font-size: 14px;
+}
+td {  /* Table  */
+   font-size: 12px;
+}
+h1 { /* Header 1 */
+ font-size: 26px;
+ font-weight: bold;
+}
+h2 { /* Header 2 */
+ font-size: 26px;
+ font-weight: bold;
+}
+h3 { /* Header 3 */
+ font-size: 18px;
+ font-weight: bold;
+}
+h4 { /* Header 4 */
+ font-size: 16px;
+ font-weight: bold;
+}
+code.r{ /* Code block */
+  font-size: 12px;
+}
+pre { /* Code block */
+  font-size: 12px
+}
+.list-group-item.active, .list-group-item.active:focus, .list-group-item.active:hover {
+    background-color: #848587;
+}
+</style>
+
+  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T, warning = F, message = F)
+```
+
+Data Availability: Full dataset, code, and figures can be found here: https://github.com/makuhs/Inhibition-Phenotypes
+
+<div style="background-color: #ffd591; padding: 20px; 
+            display: flex; align-items: center; justify-content: center;
+            text-align: center;">
+
+*Note: Included code creates base versions of all published figures. Additional elements such as legends, titles, and annotations were added via post-processing in Adobe Illustrator.*
+
+</div>
+
+## Packages
+```{r}
+library(tidyverse)
+library(patchwork)
+library(stringr)
+library(ragg)
+library(emmeans)
+library(ggpubr)
+library(broom)
+library(ape)
+library(phylotools)
+library(lmerTest)
+```
+
+# Data
+## Load Data
+```{r}
+fullData<- read.csv("pairwise_inhib_full.csv", header = T)
+
+#str
+fullData$Media <- as.factor(fullData$Media)
+fullData$Zone_Radius <- as.numeric(fullData$Zone_Radius)
+
+#area
+dataArea <- fullData %>%
+  mutate(area = pi*(Zone_Radius^2))
+```
+
+# Main
+
+## Figure 1
+### 1A: Intensity 
+```{r}
+dataZone <- dataArea %>%
+  filter(area > 0)%>%
+  group_by(Target, Overlay, Media, Treatment, Plot)%>%
+  summarise(meanArea = mean(area))
+
+dataZone[,4] <- ifelse(dataZone[,4] == "Non-Amended", "Low Nutrient History", 
+                     ifelse(dataZone[,4] == "Amended", "High Nutrient History", 99))
+
+dataZone$Media <- as.factor(dataZone$Media)
+dataZone$Plot <- as.factor(dataZone$Plot)
+dataZone$Treatment <- factor(dataZone$Treatment, levels = c("Low Nutrient History", "High Nutrient History"))
+
+dataZoneSum <- dataZone %>%
+  group_by(Treatment, Media)%>%
+  summarize(mean = mean(meanArea),
+         sd = sd(meanArea),
+         n=n(),
+         se=sd/sqrt(n),
+         ci=se*qt((1-0.05)/2 + 0.5, n-1))
+
+a1 <- dataZoneSum %>%
+    filter(Media == 100)%>%
+    ggplot(., aes(Treatment, mean, fill = Treatment))+
+    geom_col(fill = c("#bbd6ed","#4a91ce"), alpha=0.8, width=0.75)+
+    geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.1)+
+    scale_x_discrete(labels = function(Treatment) str_wrap(Treatment, width = 15))+
+    theme_minimal()+
+    labs(x = "",
+         y = expression(paste("Area of Inhibition Zone ", (mm^{2}))))
+
+t.test(meanArea ~ Treatment, data = dataZone)
+```
+
+### 1B: Frequency
+```{r}
+dataFreq <- dataArea %>%
+  group_by(Plot, Media, Target, Overlay, Treatment)%>%
+  summarise(mean = mean(area)) %>% 
+  mutate(freq = case_when(mean > 0 ~ 1,
+                          mean == 0 ~ 0))%>%
+  ungroup()%>%
+  group_by(Plot, Media, Target, Treatment)%>%
+  summarise(count = n(),
+            freq = sum(freq),
+            perc = (freq/count)*100)
+
+dataFreq[,4] <- ifelse(dataFreq[,4] == "Non-Amended", "Low Nutrient History", 
+                       ifelse(dataFreq[,4] == "Amended", "High Nutrient History", 99))
+
+dataFreq$Plot <- as.factor(dataFreq$Plot)
+dataFreq$Treatment <- factor(dataFreq$Treatment, levels = c("Low Nutrient History", "High Nutrient History"))
+
+dataFreq %>%
+  filter(Media == 100)%>%
+  t.test(perc ~ Treatment, data=.)
+
+dataFreqSum <- dataFreq %>%
+  group_by(Treatment, Media)%>%
+  summarize(mean = mean(perc),
+            sd = sd(perc),
+            n=n(),
+            se=sd/sqrt(n),
+            ci=se*qt((1-0.05)/2 + 0.5, n-1))
+
+b1<- dataFreqSum %>%
+  filter(Media == 100)%>%
+  ggplot(., aes(Treatment, mean))+
+  geom_col(aes(fill = Treatment), alpha=0.8, width=0.75)+
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.1)+
+  coord_cartesian(clip = "off",
+                  ylim = c(0, 95))+
+  scale_x_discrete(labels = function(Treatment) str_wrap(Treatment, width = 15))+
+  scale_fill_manual(values = c("#bbd6ed","#4a91ce"))+
+  theme_minimal()+
+  theme(legend.position = "none") +
+  labs(x = "",
+       y = ("Percent of Inhibited Sympatric Isolates (%)"))
+
+
+```
+
+
+### 1C: Freq by Intensity 
+```{r}
+# data prep
+meanDataZone <- dataZone %>%
+  group_by(Target, Treatment, Media)%>%
+  summarise(meanZone = mean(meanArea))
+
+freqInt <- merge(meanDataZone, dataFreq, by = c("Target", "Treatment", "Media"))%>%
+  mutate(block = case_when(
+    Plot == 1 | Plot == 2 ~ "Block 1",
+    Plot == 3 | Plot == 4 ~ "Block 2",
+    Plot == 5 | Plot == 6 ~ "Block 3"
+  ))
+
+# linear model
+d1 <- freqInt %>% filter(Media == 100)
+m1 <- lm(meanZone ~ perc * Treatment, data = d1)
+
+emtrends(m1, ~ Treatment, var = "perc") %>%
+  summary(infer = TRUE)
+
+# figure
+c1 <- freqInt %>%
+  filter(Media == 100)%>%
+ggplot(., aes(perc,meanZone, color = Treatment))+
+  geom_smooth(method="lm", se=F,
+              show.legend = F)+
+  geom_point(alpha=0.75)+
+  theme_minimal()+
+  scale_color_manual(values = c("#bbd6ed","#4a91ce"),
+                     name = "")+
+  coord_cartesian(ylim = c(0, 900))+
+  theme(legend.position = "none")+
+  labs(
+    x= "\nMean Inhibition Frequency",
+    y= "Mean Inhibition Intensity\n"
+  )
+
+
+
+```
+
+### Final 
+```{r, fig.dim = c(7, 8)}
+finalfig1 <- ggarrange(
+  ggarrange(a1, b1, ncol = 2),
+  c1,
+  nrow = 2,
+  heights = c(2, 2))
+
+finalfig1
+```
+
+## Figure 2:
+### 2A: Intensity by plot
+```{r}
+
+# Inhibition zone by plot: 
+blockDataZone <- dataZone %>%
+  mutate(block = case_when(
+    Plot == 1| Plot == 2 ~ "A",
+    Plot == 3| Plot == 4 ~ "B",
+    Plot == 5| Plot == 6 ~ "C"))
+
+d <- blockDataZone %>%
+  filter(Media == 100) %>%
+  mutate(block = factor(block),
+         Plot = factor(Plot),
+         Treatment = factor(Treatment),
+         Target = factor(Target))  
+
+pm_raw <- d %>%
+  group_by(block, Treatment, Target) %>%
+  summarise(y = mean(meanArea), .groups = "drop") %>%
+  group_by(block, Treatment) %>%
+  summarise(m = mean(y), .groups = "drop") %>%
+  pivot_wider(names_from = Treatment, values_from = m)
+
+# block-level 
+pm_raw                                   
+# overall treatment means
+colMeans(pm_raw[, -1])                   
+
+# Paired t-test 
+t.test(pm_raw$`High Nutrient History`,
+             pm_raw$`Low Nutrient History`, paired = TRUE)
+
+## Figure
+Intensity2 <- dataZone %>%
+  mutate(lab = case_when(
+    Plot == 1 ~ "LN 1",
+    Plot == 2 ~ "HN 1",
+    Plot == 3 ~ "LN 2",
+    Plot == 4 ~ "HN 2",
+    Plot == 5 ~ "LN 3",
+    Plot == 6 ~ "HN 3"))%>%
+  filter(Media == 100)
+
+a2 <- ggplot(Intensity2, aes(reorder(lab, as.numeric(Plot)), meanArea, color = Treatment, fill = Treatment))+
+  geom_boxplot(alpha=0.5, outlier.shape = NA)+
+  geom_point(position=position_jitter(width=0.3), 
+             size = 1, alpha=0.8)+
+  geom_vline(xintercept = 2.5,
+             color = "grey80", lty = 2)+
+  geom_vline(xintercept = 4.5,
+             color = "grey80", lty = 2)+
+  coord_cartesian(clip = "off",
+                  y=c(0,1400))+
+  scale_fill_manual(values = c("#bbd6ed","#4a91ce"))+
+  scale_color_manual(values = c("#bbd6ed","#4a91ce"))+
+  theme_minimal()+
+  theme(legend.position = "none")+
+  labs(x = "",
+       y = "Inhibition Intensity (mm^2)\n")
+
+```
+
+### 2B: Frequency by plot
+```{r}
+#Inhibition frequency 
+
+blockDataFreq <- dataFreq%>%
+  mutate(block = case_when(
+    Plot == 1| Plot == 2 ~ "A",
+    Plot == 3| Plot == 4 ~ "B",
+    Plot == 5| Plot == 6 ~ "C"))
+
+blockDataFreq$Plot <- as.factor(blockDataFreq$Plot)
+
+
+d <- blockDataFreq %>%
+  filter(Media == 100) %>%
+  mutate(block = factor(block),
+         Plot = factor(Plot),
+         Treatment = factor(Treatment),
+         Target = factor(Target))   
+
+# Isolate-level summary
+d %>%
+  group_by(block, Treatment) %>%
+  summarise(mean = mean(freq), sd = sd(freq), n = n_distinct(Target),
+            .groups = "drop")
+
+pm_freq <- d %>%
+  group_by(block, Treatment, Target) %>%
+  summarise(y = mean(freq), .groups = "drop") %>%
+  group_by(block, Treatment) %>%
+  summarise(m = mean(y), .groups = "drop") %>%
+  pivot_wider(names_from = Treatment, values_from = m)
+
+#block-level
+pm_freq    
+# overall treatment means
+colMeans(pm_freq[, -1])                  
+
+# Paired t-test across blocks 
+t.test(pm_freq$`High Nutrient History`,
+                  pm_freq$`Low Nutrient History`, paired = TRUE)
+
+# figure
+b2 <- dataFreq %>%
+  mutate(lab = case_when(
+    Plot == 1 ~ "LN 1",
+    Plot == 2 ~ "HN 1",
+    Plot == 3 ~ "LN 2",
+    Plot == 4 ~ "HN 2",
+    Plot == 5 ~ "LN 3",
+    Plot == 6 ~ "HN 3"))%>%
+  filter(Media == 100)%>%
+  ggplot(., aes(reorder(lab, as.numeric(Plot)), perc, color = Treatment, fill = Treatment))+
+  geom_boxplot(alpha=0.5, outlier.shape = NA)+
+  geom_dotplot(binaxis='y', stackdir='center',
+               stackratio=1.5, dotsize=0.25, binwidth = 10,
+               alpha=0.8)+
+  geom_vline(xintercept = 2.5,
+             color = "grey80", lty = 2)+
+  geom_vline(xintercept = 4.5,
+             color = "grey80", lty = 2)+
+  coord_cartesian(clip = "off")+
+  scale_fill_manual(values = c("#bbd6ed","#4a91ce"))+
+  scale_color_manual(values = c("#bbd6ed","#4a91ce"))+
+  theme_minimal()+
+  theme(legend.position = "none")+
+  labs(x = "",
+       y = "Inhibtion Frequency (%)")
+
+```
+
+### Final
+```{r, fig.dim = c(7, 5)}
+
+finalfig2 <- ggarrange(
+  a2, b2,
+  ncol = 1,
+  nrow = 2,
+  heights = c(1, 1)
+)
+
+finalfig2
+```
+
+## Figure 3: 
+### Responsiveness Calculation
+```{r}
+
+dataDiff <- dataArea %>% 
+  group_by(Plot, Media, Target, Overlay, Treatment)%>%
+  summarise(mean = mean(area))%>%
+  pivot_wider(names_from = Media, values_from = mean)%>%
+  rename(
+    media10 = "10",
+    media100 = "100")%>%
+  ungroup()%>%
+  mutate(diff = media100 - media10,
+         absDiff = abs(diff))
+
+sd <- sd(dataDiff$absDiff)
+
+dataDiff <- dataDiff %>%
+  mutate(group = case_when(
+           media100 > media10 & media10 != 0 & absDiff > sd ~ "increase",
+           media10 > media100 & media100 != 0 & absDiff > sd ~ "decrease",
+           media100 == 0 & media10 != 0 ~ "suppression",
+           media10 == 0 & media100 != 0 ~ "induction",
+           media10 != 0 & media100 != 0 & absDiff < sd ~ "no change",
+           media10 == 0 & media100 == 0 ~ "no inhibition"
+         ))
+
+dataDiff[,4] <- ifelse(dataDiff[,4] == "Non-Amended", "Low Nutrient History", 
+                          ifelse(dataDiff[,4] == "Amended", "High Nutrient History", 99))
+
+dataDiff$Treatment <- factor(dataDiff$Treatment, levels = c("High Nutrient History", "Low Nutrient History"))
+dataDiff$group <- factor(dataDiff$group, levels = c("induction", "increase", "decrease", "suppression", "no change", "no inhibition"))
+
+#summary 
+dataDiffSum<- dataDiff%>%
+  group_by(Treatment, group)%>%
+  summarise(count = n())%>%
+  ungroup()%>%
+  group_by(Treatment)%>%
+  mutate(total = sum(count),
+         freq = count/total)
+
+dataDiffSum$Treatment <- factor(dataDiffSum$Treatment, levels = c("Low Nutrient History", "High Nutrient History"))
+
+dataDiffSum$group <- factor(dataDiffSum$group, levels = c("suppression", "decrease", "no change", "increase", "induction"))
+
+```
+
+### 3A: Responsiveness Intensity
+```{r}
+
+a3 <- dataDiffSum %>%
+filter(group != "no inhibition")%>%
+ggplot(., aes(group, freq, fill=group))+
+  geom_col(position = "dodge", alpha=0.8)+
+  facet_wrap(~Treatment)+
+  scale_fill_manual(values= c("#EA725D", "#F5BB62", "grey90", "#85d1d1", "#5499c7"),
+                    name = "")+
+  theme_minimal()+
+  theme(panel.grid.major.x = element_blank(),
+        legend.position = "none",
+        plot.margin = margin(0.5, 1, 0.5, 0.75, "cm"),
+        axis.text.x = element_text(size = 7, angle = 45, vjust = 1.2, hjust=1))+
+  labs(x = "",
+       y = "Frequency of Responsivness (%)\n")
+```
+
+### 3B: Responsiveness Intensity
+```{r}
+b3 <- dataDiff %>%
+  filter(group != "no inhibition")%>%
+  ggplot(., aes(diff, Treatment))+
+  geom_vline(xintercept=0, color = "grey60", lty = 2)+
+  geom_point(aes(color = group),
+             position = position_jitter(height = 0.2, width =0), 
+             alpha=0.75,
+             size = 1.2)+
+  geom_boxplot(fill = NA, width = 0.2, outlier.shape = NA)+
+  scale_color_manual(values= c("#5499C7", "#aed6d6","#f5c67f","#db7c6b","grey88"),
+                    name = "")+
+  theme_minimal()+
+  theme(legend.position = "none", 
+        axis.text.y = element_blank())+
+  labs(x = "Responsivness Intensity", y = "")
+
+```
+
+### Final 
+```{r, fig.dim = c(6, 7)}
+
+finalfig3 <- ggarrange(
+  a3, b3,
+  ncol = 1,
+  nrow = 2,
+  heights = c(1, 1.5)
+)
+
+finalfig3
+```
+
+## Figure 4:
+### Nutrient Use Data
+```{r}
+#### Niche Width ####
+nw <- read.csv("e001nicheWidthTest.csv")%>%
+  filter(Plot_x == Plot_y)%>%
+  select(-Treatment_x)%>%
+  select(-Treatment_y)%>%
+  select(-Plot_y)%>%
+  rename(Plot = Plot_x,
+         Target = Isolate_x,
+         Overlay = Isolate_y)
+
+# area
+dataAreaNW <- merge(dataArea, nw, by=c("Plot", "Overlay", "Target"))%>%
+  group_by(Plot, Media, Target, Overlay, Treatment, overlap_pw, overlap_hv)%>%
+  summarise(mean = mean(area))%>%
+  ungroup()
+
+dataAreaNW[,5] <- ifelse(dataAreaNW[,5] == "Non-Amended", "Low Nutrient History", 
+                    ifelse(dataAreaNW[,5] == "Amended", "High Nutrient History", 99))
+
+dataAreaNW[,2] <- ifelse(dataAreaNW[,2] == "10", "Low Resource Environment", 
+                         ifelse(dataAreaNW[,2] == "100", "High Resource Environment", 99))
+
+dataAreaNW$Treatment <- factor(dataAreaNW$Treatment, levels = c("Low Nutrient History", "High Nutrient History"))
+
+dataAreaNW$Media <- factor(dataAreaNW$Media, levels = c("Low Resource Environment", "High Resource Environment"))
+
+```
+
+### Figure 4: Responsiveness by Niche Overlap 
+```{r, fig.dim = c(8, 4.5)}
+dataAreaNW %>%
+  filter(mean > 0)%>%
+  ggplot(., aes(overlap_hv, mean, color = Media))+
+  geom_point(alpha=0.5, size = 0.8)+
+  geom_smooth(method = "lm", se = F, size = 0.8)+
+  facet_wrap(~Treatment, scales = "free")+
+  coord_cartesian(xlim = c(0.28, 1.0),
+                  ylim = c(0, 1650))+
+  theme_minimal()+
+  scale_color_manual(values = c("#5499C7", "#e68270"), name = "")+
+  theme(panel.spacing = unit(1.2, "lines"),
+        strip.text = element_text(face = "bold"),
+        axis.text = element_text(size = 6.5),
+        legend.text = element_text(size = 6.5),
+        legend.position = "none")+
+  labs(x = "Niche Overlap", 
+       y = "Inhibition Intensity")
+
+```
+
+# Supplement
+
+### Table S1: Soil Data
+```{r}
+#soil data
+soilData <- read.csv("SoilChemData.csv")
+
+# By Treatment 
+soilData %>%
+  group_by(Treatment)%>%
+  summarise(pH = mean(pH),
+            BrayP = mean(Bray.P),
+            K = mean(K),
+            totalC = mean(Total.C),
+            NO3N = mean(NO3.N))
+
+soilData %>%
+  pivot_longer(
+    cols = c(pH, Bray.P, K, Total.C, NO3.N),
+    names_to = "Chemical",
+    values_to = "Value"
+  ) %>%
+  group_by(Chemical) %>%
+  summarise(
+    tidy(t.test(Value ~ Treatment)),
+    .groups = "drop"
+  )
+
+# By Plot 
+soilData %>%
+  group_by(LabPlot_ID)%>%
+  summarise(pH = mean(pH),
+            BrayP = mean(Bray.P),
+            K = mean(K),
+            totalC = mean(Total.C),
+            NO3N = mean(NO3.N))
+
+```
+
+### Fig S1: Phylo Tree
+```{r}
+
+mytree <- ape::read.tree("reverse.newick")
+
+#shorthand name
+new_tipLabels <- read.csv("newNameTree.csv")
+reducedColor <- read.csv("reducedColor.csv")
+cols <- c("#5499C7", "indianred")
+
+#full tree
+name <- new_tipLabels$name
+mytree$tip.label <- name
+
+plot(mytree, type = "tidy",
+     use.edge.length = T,
+     cex = 0.7,
+     tip.color = cols[(new_tipLabels$treat == "1")+1],
+     edge.color = "grey50",
+     label.offset = 0.001,
+     no.margin = T)
+
+```
+
+### Fig S2: Inhibition intensity (all pairs)
+```{r, fig.dim = c(7, 8)}
+dataZoneFull <- dataArea %>%
+  group_by(Target, Overlay, Media, Treatment, Plot)%>%
+  summarise(meanArea = mean(area))
+
+dataZoneFull[,4] <- ifelse(dataZoneFull[,4] == "Non-Amended", "Low Nutrient History", 
+                       ifelse(dataZoneFull[,4] == "Amended", "High Nutrient History", 99))
+
+dataZoneFull$Media <- as.factor(dataZoneFull$Media)
+dataZoneFull$Plot <- as.factor(dataZoneFull$Plot)
+dataZoneFull$Treatment <- factor(dataZoneFull$Treatment, levels = c("Low Nutrient History", "High Nutrient History"))
+
+dataZoneFullSum <- dataZoneFull %>%
+  group_by(Treatment, Media)%>%
+  summarize(mean = mean(meanArea),
+            sd = sd(meanArea),
+            n=n(),
+            se=sd/sqrt(n),
+            ci=se*qt((1-0.05)/2 + 0.5, n-1))
+
+s2a <- dataZoneFullSum %>%
+  filter(Media == 100)%>%
+  ggplot(., aes(Treatment, mean, fill = Treatment))+
+  geom_col(fill = c("#bbd6ed","#4a91ce"), alpha=0.8, width=0.75)+
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.1)+
+  scale_x_discrete(labels = function(Treatment) str_wrap(Treatment, width = 15))+
+  theme_minimal()+
+  labs(x = "",
+       y = expression(paste("Area of Inhibition Zone ", (mm^{2}))))
+
+t.test(meanArea ~ Treatment, data = dataZoneFull)
+
+#by plot 
+
+# Inhibition zone by plot: 
+blockDataZoneFull <- dataZoneFull %>%
+  mutate(block = case_when(
+    Plot == 1| Plot == 2 ~ "A",
+    Plot == 3| Plot == 4 ~ "B",
+    Plot == 5| Plot == 6 ~ "C"))
+
+dFull <- blockDataZoneFull %>%
+  filter(Media == 100) %>%
+  mutate(block = factor(block),
+         Plot = factor(Plot),
+         Treatment = factor(Treatment),
+         Target = factor(Target))  
+
+pm_full <- dFull %>%
+  group_by(block, Treatment, Target) %>%
+  summarise(y = mean(meanArea), .groups = "drop") %>%
+  group_by(block, Treatment) %>%
+  summarise(m = mean(y), .groups = "drop") %>%
+  pivot_wider(names_from = Treatment, values_from = m)
+
+# Paired t-test 
+t.test(pm_full$`High Nutrient History`,
+             pm_full$`Low Nutrient History`, paired = TRUE)
+
+#figure
+IntensityFull <- dataZoneFull %>%
+  mutate(lab = case_when(
+    Plot == 1 ~ "LN 1",
+    Plot == 2 ~ "HN 1",
+    Plot == 3 ~ "LN 2",
+    Plot == 4 ~ "HN 2",
+    Plot == 5 ~ "LN 3",
+    Plot == 6 ~ "HN 3"))%>%
+  filter(Media == 100)
+
+s2b <- ggplot(IntensityFull, aes(reorder(lab, as.numeric(Plot)), meanArea, color = Treatment, fill = Treatment))+
+  geom_boxplot(alpha=0.5, outlier.shape = NA)+
+  geom_point(position=position_jitter(width=0.3), 
+             size = 1, alpha=0.8)+
+  geom_vline(xintercept = 2.5,
+             color = "grey80", lty = 2)+
+  geom_vline(xintercept = 4.5,
+             color = "grey80", lty = 2)+
+  coord_cartesian(clip = "off",
+                  y=c(0,1400))+
+  scale_fill_manual(values = c("#bbd6ed","#4a91ce"))+
+  scale_color_manual(values = c("#bbd6ed","#4a91ce"))+
+  theme_minimal()+
+  theme(legend.position = "none")+
+  labs(x = "",
+       y = expression(paste("Area of Inhibition Zone ", (mm^{2}))))
+
+#final 
+finalfigS2 <- ggarrange(
+  s2a, s2b,
+  ncol = 1,
+  nrow = 2,
+  heights = c(1, 1.5)
+)
+
+finalfigS2
+
+```
+
+### Fig S3: Inhibition by Frequency (by plot)
+```{r}
+
+freqInt %>%
+  filter(Media == 100)%>%
+  ggplot(., aes(perc,meanZone, color = Treatment))+
+  geom_smooth(method="lm", se=F, size = 0.8,
+              show.legend = F)+
+  geom_point(alpha=0.75)+
+  theme_minimal()+
+  scale_color_manual(values = c("#bbd6ed","#4a91ce"),
+                     name = "")+
+  #scale_shape_manual(values = c(15, 16, 17, 15, 16, 17))+
+  coord_cartesian(ylim = c(0, 900))+
+  theme(legend.position = "none")+
+  facet_wrap(~block, nrow = 3)+
+  labs(
+    x= "\nMean Inhibition Frequency",
+    y= "Mean Inhibition Intensity\n"
+  )
+
+
+individual_lm <- freqInt %>%
+  filter(Media == 100) %>%
+  group_by(block, Treatment) %>%
+  nest() %>%
+  mutate(
+    model = map(data, ~ lm(meanZone ~ perc, data = .x)),
+    coefficients = map(model, tidy),
+    fit = map(model, glance))
+
+# Slopes, intercepts, and p-values
+individual_lm %>%
+  select(block, Treatment, coefficients) %>%
+  unnest(coefficients)
+
+# R-squared for each regression
+individual_lm %>%
+  select(block, Treatment, fit) %>%
+  unnest(fit) %>%
+  select(block, Treatment, r.squared, p.value)
+
+d1 <- freqInt %>%
+  filter(Media == 100)
+
+m2 <- lmer(
+  meanZone ~ perc * Treatment + (1 | block),
+  data = d1
+)
+
+summary(m2)
+```
+
+
+#### Fin 
